@@ -1,0 +1,231 @@
+---
+title: "BEE 4750/5750 Homework 3"
+author: "Sonjay Lake (svl24)"
+date: `j import Dates; Dates.Date(Dates.now())`
+weave_options:
+    term: true
+    results: tex
+    cache: off
+---
+
+<!-- This setups the environment and installs packages, but doesn't appear in the generated document -->
+<!-- You shouldn't need to modify this -->
+```julia; echo = false; results = "hidden"
+using Pkg
+Pkg.activate(".")
+Pkg.instantiate()
+```
+
+<!--- this block is hidden, but stores the generator and demand data; you can use a dataframe to combine these or refactor as you'd like -->
+```julia; echo = false; results = "hidden"
+# generator data
+investment_cost = [457000, 268000, 85000, 62580, 92000, 92000]
+op_cost = [0, 22, 35, 45, 0, 0]
+co2_emissions = [0, 1, 0.43, 0.55, 0, 0]
+thermal_cf = [0.95, 1, 1, 1]
+
+hours = 1:24
+demand = [1517, 1486, 1544, 1733, 2058, 2470, 2628, 2696, 2653, 2591, 2626, 2714, 2803, 2842, 2891,  2821, 3017, 3074, 2957,  2487, 2249, 1933, 1684, 1563]
+wind_cf = [0.58, 0.57, 0.55, 0.28, 0.14, 0.21, 0.03, 0.04, 0.01, 0.04, 0.04, 0.01, 0.04, 0.04, 0.01, 0.01, 0.01, 0.13, 0.30, 0.45, 0.44, 0.57, 0.55, 0.58]
+solar_cf = [0, 0, 0, 0, 0, 0, 0.20, 0.57, 0.80, 0.93, 0.99, 0.99, 0.85, 0.99, 0.95, 0.81, 0.55, 0.12, 0, 0, 0, 0, 0, 0]
+```
+
+# Problem 1
+
+## Problem 1.1
+```julia
+#Decision variables = variables being changed/decided upon
+# - MW/yr of each generator type to build = x
+# - MW/hr of energy produced from each generator type = y
+# - MWyr of unmet energy demand for each hour = z
+```
+
+```math 
+\begin{alignat*}{0}
+\text {There are three decision variables for this model: } \\ \\
+x_{i} (\frac{MW}{yr}) \\ \\
+y_{i,t} (\frac{MW}{hr})  \\\\
+z_{t} (\frac{MW}{hr}) \\ \\
+
+\text {Where }  x_{g} 
+\text   { is the generation capacity built for generator type g, } \\
+ y_{i} \text { is the energy produced from each generator type g at time t } \\
+\text {and } 
+z_{t} \text { is the unmet energy demand at each time period, t} \\
+
+\end{alignat*}{0}
+
+```
+## Problem 1.2
+```math
+\begin{alignat*}{0}
+\text {Our objective function should minimize the overall cost of electricity production.} \\
+\text {First we must derive a function for the cost of electricity generation using the decision variables.} \\
+\text {Let } C_{g}^{INV}, C_{g}^{OP}, \text{ and } L_{t} \text { represent the investment cost } \\
+\text {for generator g, the operating cost for generator g, and the length of the time period respectively.} \\
+\text {Then cost can be represented as: } \\\\
+
+\sum_{g=0}{C_{g}^{INV} *x_{g}} + \sum_{g=0}{\sum_{t=0}L_{t}*C_{g}^{OP}*y_{g,t}*365} + \sum_{t=0}{z*365} \\ \\
+
+\text {The energy production and demand variables are multiplied by 365 in order to convert them into } \\
+\text {annual values.}
+
+\end{alignat*}{0}
+```
+
+```julia
+#Formulate the objective function
+using Pkg
+Pkg.add("JuMP")
+Pkg.add("HiGHS")
+using JuMP
+using HiGHS
+energy_grid = Model(HiGHS.Optimizer)
+generators = ["Geothermal","Coal","CCGT","CT","wind","Solar"]
+G = 1:length(generators)
+T = hours
+@variable(energy_grid,x[G] >= 0)
+@variable(energy_grid,y[G,T] >= 0)
+@variable(energy_grid,z[T] >=0) #this is the unmet demand variable
+@objective(energy_grid, Min, (investment_cost'* x) + sum(op_cost.*y)*365 + sum(z*1000*365) ) 
+
+```
+## Problem 1.3
+```math 
+\begin{alignat*}{0}
+\text {The first set of constraints would be the non-negativity constraint for each variable: }\\\\
+y_{i,t}\geq 0 , \text{ } x_{i}\geq 0 ,\text{ and } z_{t}\geq 0 \\\\
+\text {We also want to take into account the capacity factor, } C_{g,i} \text { for each generator} \\
+\text {For any given generator:   } y_{g,i} \leq y_{g,i} * C_{g,i} \\\\
+\text {At the same time, the setup must meet the demand, so for any given set of generators:  } \\\\
+\sum_{t}{y_{:,t}} = D_{t} \\\\
+\text {Where } D_{t} \text { is the demand at time period t.}
+
+
+\end{alignat*}{0}
+```
+
+
+
+```julia
+avail = zeros(6,24);
+for k in 1:4
+    avail[k,:] .= thermal_cf[k]
+end 
+avail[5,:] = wind_cf 
+avail[6,:] = solar_cf
+
+@constraint(energy_grid,a[g in G, t in T], y[g,t] <= avail[g,t] * x[g])
+@constraint(energy_grid, load[t in T], sum(y[:, t]) + sum(z[t]) == demand[t])
+
+
+```
+
+## Problem 1.4
+```julia
+
+optimize!(energy_grid)
+generation = [sum(value.(y).data[g, :] .* hours) for g in G]
+
+```
+
+## Problem 1.5
+```julia 
+#Solution can be found using value.(x) 
+value.(x) 
+value.(y) 
+num_geo = round(value.(x)[1])
+num_coal = round(value.(x)[2]) 
+num_ccgt = round(value.(x)[3])
+num_ct = round(value.(x)[4])
+num_wind = round(value.(x)[5])
+num_solar = round(value.(x)[6])
+cost = objective_value(energy_grid)
+```
+
+```math
+
+\begin{alignat*}{0}
+\text {According to the model, the utility should build 1704 MW of CCGT} \\
+\text {881 MW of CT, 1238 MW of wind, and 2729 MW of solar plants. The model  } \\
+\text {does not reccommend invest any capacity into geothermal or coal plants.}\\
+\text {The approximate cost for this development would be $912,100,000.}
+
+\end{alignat*}{0}
+```
+
+
+## Problem 1.6
+```julia 
+using Plots
+generated = value.(y).data
+p = plot(generated',xlabel ="Hours",ylabel="Generated Electricity(MW)",
+    color_palette=:seaborn_bright,
+    label = permutedims(generators),title="Hourly Plant by Plant Generation")
+z = areaplot(generated',label=permutedims(generators),xlabel="Hours",ylabel="Generated Electricity(MW)",title="MW Generation vs. Time, Stacked");
+plot!(demand, color=:red, label="demand",linestyle=:dash, linewidth=5);
+display(p)
+display(z)  
+
+#
+```
+# Problem 2
+
+## Problem 2.1
+```julia 
+#Would need to create a new design variable, CO2 emissions
+#Would need to create a new constraint and implement it into the model
+
+#New Var : e, tCO2 emitted /MWh for a given generator type
+#Constraint: total CO2 emitted by any given column must be less than 1.5 MtCo2 /yr
+
+
+```
+## Problem 2.2
+```julia 
+
+energy_grid_co2 = Model(HiGHS.Optimizer);
+generators_co = ["Geothermal","Coal","CCGT","CT","wind","Solar"];
+G_co = 1:length(generators_co);
+T_co = 1:24;
+@variable(energy_grid_co2,x_[G_co] >= 0);
+@variable(energy_grid_co2,y_[G_co,T_co] >= 0);
+@variable(energy_grid_co2,z_[T_co] >=0); #this is the unmet demand variable
+@objective(energy_grid_co2, Min, (investment_cost'* x_) + sum(op_cost.*y_)*365 + sum(z_*1000*365)); 
+###
+
+avail_co = zeros(6,24);
+for k in 1:4
+    avail_co[k,:] .= thermal_cf[k];
+end 
+avail_co[5,:] = wind_cf;
+avail_co[6,:] = solar_cf;
+
+@constraint(energy_grid_co2,a_[g in G_co, t in T_co], y_[g,t] <= avail_co[g,t] * x_[g]);
+@constraint(energy_grid_co2, load_[t in T_co], sum(y_[:, t]) + sum(z_[t]) == demand[t]);
+
+###
+@constraint(energy_grid_co2, co2, sum(co2_emissions' * y_ * 365) <=  (1.5*10^6) ); 
+
+```
+## Problem 2.3
+```julia
+optimize!(energy_grid_co2)
+```
+## Problem 2.4
+```julia 
+
+generated_co2 = value.(y_).data
+p = plot(generated_co2',xlabel ="Hours",ylabel="Generated Electricity(MW)",
+    color_palette=:seaborn_bright,
+    label = permutedims(generators),title="Hourly Plant by Plant Generation")
+z = areaplot(generated_co2',label=permutedims(generators),xlabel="Hours",ylabel="Generated Electricity(MW)", title="MW Generation vs. Time, Stacked");
+plot!(demand, color=:red, label="demand",linestyle=:dash, linewidth=5);
+display(p)
+display(z)  
+
+
+```
+## Problem 2.5
+
+# References
