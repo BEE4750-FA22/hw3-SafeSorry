@@ -144,19 +144,18 @@ cost = objective_value(energy_grid)
 ```
 
 ```math
-
 \begin{alignat*}{0}
-\text {According to the model, the utility should build 1704 MW of CCGT} \\
-\text {881 MW of CT, 1238 MW of wind, and 2729 MW of solar plants. The model  } \\
-\text {does not reccommend invest any capacity into geothermal or coal plants.}\\
-\text {The approximate cost for this development would be $912,100,000.}
+\text {According to the model, the utility should build } 1704 \text { MW of CCGT,} \\
+ 881 \text{ MW of CT, } 1238 \text{ MW of wind, and } 2729 \text { MW of solar plants. The model} \\
+\text {does not reccommend capacity investment into geothermal or coal plants.}\\
+\text {The approximate cost for this development would be } $912,100,000.
 
 \end{alignat*}{0}
 ```
 
 
 ## Problem 1.6
-```julia 
+```julia; echo=false
 using Plots
 generated = value.(y).data
 p = plot(generated',xlabel ="Hours",ylabel="Generated Electricity(MW)",
@@ -165,10 +164,20 @@ p = plot(generated',xlabel ="Hours",ylabel="Generated Electricity(MW)",
 z = areaplot(generated',label=permutedims(generators),xlabel="Hours",ylabel="Generated Electricity(MW)",title="MW Generation vs. Time, Stacked");
 plot!(demand, color=:red, label="demand",linestyle=:dash, linewidth=5);
 display(p)
-display(z)  
-
-#
+display(z)
 ```
+Based on the grid setup this model proposes, most of the midday demand for 
+electricity will be met by solar plants. Both solar and CCGT contribute to the bulk
+of the electricity demand, and when the demand becomes too high for CCGT to become optimal,
+which is during the midday, solar is used to compensate. There are minor contributions from 
+wind and CT plants, but none from coal and geothermal as mentioned earlier. 
+
+It seems that CCGT's low investment costs makes it an attractive option for 
+capacity investment and solar's low operation cost combined with its heightened 
+capcity factor during certain hours makes it an attractive alternative to swap out 
+with CCGT as the main contributor during certain hours.
+
+
 # Problem 2
 
 ## Problem 2.1
@@ -179,8 +188,11 @@ display(z)
 #New Var : e, tCO2 emitted /MWh for a given generator type
 #Constraint: total CO2 emitted by any given column must be less than 1.5 MtCo2 /yr
 
-
 ```
+The linear program would remain largely the same. The only change would be the 
+implementation of a new constraint using the co2_emissions and the production from 
+each generator. 
+
 ## Problem 2.2
 ```julia 
 
@@ -209,11 +221,31 @@ avail_co[6,:] = solar_cf;
 
 ```
 ## Problem 2.3
-```julia
+```julia echo= false
 optimize!(energy_grid_co2)
+value.(x_) 
+value.(y_) 
+num_geo = round(value.(x_)[1])
+num_coal = round(value.(x_)[2]) 
+num_ccgt = round(value.(x_)[3])
+num_ct = round(value.(x_)[4])
+num_wind = round(value.(x_)[5])
+num_solar = round(value.(x_)[6])
+cost_ = objective_value(energy_grid_co2)
 ```
+The new model suggests 1029 MW invested into geothermal, 1185 MW 
+invested into CCGT, 444 MW invested into CT, 1676 MW invested into wind, and 
+2073 MW invested into solar capacity.
+
+The new model differs in that it includes geothermal investment, and relies
+on it consistently. Wind energy is also much more prevalent in this suggested grid setup 
+compared to the other model. The model also differs in its cost, which is approximately 
+$1,066,000,000. This is noticably more expensive than the previous model.
+
+
+
 ## Problem 2.4
-```julia 
+```julia; echo= false
 
 generated_co2 = value.(y_).data
 p = plot(generated_co2',xlabel ="Hours",ylabel="Generated Electricity(MW)",
@@ -226,6 +258,46 @@ display(z)
 
 
 ```
-## Problem 2.5
 
+The model which takes into account CO2 suggests a greater investment 
+into plants which have 0 emissions. Geothermal, which wasn't suggested 
+at all in the first model, is now a consistent generator throughout 
+the day in this model. A similar thing can be said for wind power, which 
+now sees noticable use towards the early and late hours to makeup for 
+the lack of use in solar power.
+
+## Problem 2.5
+To solve this question, resolve the model with a redefined constraint 
+for the tons of Co2
+```julia
+
+energy_grid_co2_ = Model(HiGHS.Optimizer);
+generators_co_ = ["Geothermal","Coal","CCGT","CT","wind","Solar"];
+G_co_ = 1:length(generators_co_);
+T_co_ = 1:24;
+@variable(energy_grid_co2_,x__[G_co_] >= 0);
+@variable(energy_grid_co2_,y__[G_co_,T_co_] >= 0);
+@variable(energy_grid_co2_,z__[T_co_] >=0); #this is the unmet demand variable
+@objective(energy_grid_co2_, Min, (investment_cost'* x__) + sum(op_cost.*y__)*365 + sum(z__*1000*365)); 
+###
+
+avail_co_ = zeros(6,24);
+for k in 1:4
+    avail_co_[k,:] .= thermal_cf[k];
+end 
+avail_co_[5,:] = wind_cf;
+avail_co_[6,:] = solar_cf;
+
+@constraint(energy_grid_co2_,a__[g in G_co_, t in T_co_], y__[g,t] <= avail_co_[g,t] * x__[g]);
+@constraint(energy_grid_co2_, load__[t in T_co], sum(y__[:, t]) + sum(z__[t]) == demand[t]);
+
+###
+@constraint(energy_grid_co2_, co2_, sum(co2_emissions' * y__ * 365) <=  (1.5*10^6)+1000 ); 
+optimize!(energy_grid_co2_)
+difference = cost_ - objective_value(energy_grid_co2_)
+
+```
+Thus, the value to the utility of being able to emit an extra 
+1000 t/CO2 per year would be $130,221.13 in savings.
 # References
+Lecture Slides from Class
